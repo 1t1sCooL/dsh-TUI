@@ -107,6 +107,7 @@
     "./package.json": "./package.json",
     "./icon": "./assets/plugin-icon.svg",
     "./locale/en.json": "./locale/en.json",
+    "./locale/ru.json": "./locale/ru.json",
     "./locale/zh.json": "./locale/zh.json"
   },
   "files": [

@@ -22,13 +22,16 @@ import type { BackendLocale } from '../../agent/backend.js'
 import type { ElicitationText } from '../shared/elicitation.js'
 import { fillTemplate, type LocalizedText, type TextParams } from '../shared/localized-text.js'
 import { pickPlatformText } from '../shared/platform-text.js'
+import { RU_CODEX } from './text.ru.js'
 
 /**
- * Every string of this backend. `zh` and `en` are both required
- * (`scripts/verify-i18n.ts` checks the same invariants the host dictionary
- * gets: language completeness, placeholder parity and single-brace typos).
+ * Every string of this backend (the base copy; Russian lives in `text.ru.ts`
+ * and is merged below). `zh` and `en` are both required here;
+ * `scripts/verify-i18n.ts` checks the same invariants the host dictionary
+ * gets: language completeness across all shipped languages, placeholder
+ * parity and single-brace typos.
  */
-const texts = {
+const baseTexts = {
   // ── Approvals, notices, status lines and control answers ──
   'codex-approve-accept': { zh: '是，执行', en: 'Yes, proceed' },
   'codex-approve-decline': { zh: '否，跳过它继续', en: 'No, continue without running it' },
@@ -258,9 +261,27 @@ const texts = {
   ]),
 } as const satisfies Record<string, { readonly zh: LocalizedText; readonly en: LocalizedText }>
 
+type CodexBaseKey = keyof typeof baseTexts
+
+// The Russian copy lives in `text.ru.ts`; the compiler names every key missing
+// from it (or left behind by a rename), so a half-translated backend cannot
+// ship silently.
+type assertComplete<T extends never> = T
+type _MissingRuKeys = assertComplete<Exclude<CodexBaseKey, keyof typeof RU_CODEX>>
+type _UnknownRuKeys = assertComplete<Exclude<keyof typeof RU_CODEX, CodexBaseKey>>
+
+const texts: Record<
+  CodexBaseKey,
+  { readonly zh: LocalizedText; readonly en: LocalizedText; readonly ru: LocalizedText }
+> = Object.fromEntries(
+  Object.entries(baseTexts).map(([key, entry]) => [key, { ...entry, ru: RU_CODEX[key as CodexBaseKey] }]),
+) as Record<CodexBaseKey, { readonly zh: LocalizedText; readonly en: LocalizedText; readonly ru: LocalizedText }>
+
 /** Read-only view of {@link texts} for audits (`scripts/verify-i18n.ts` and the
  *  backend's own gates), mirroring `i18nDict` on the host side. */
-export const codexTexts: Readonly<Record<string, { readonly zh: LocalizedText; readonly en: LocalizedText }>> = texts
+export const codexTexts: Readonly<
+  Record<string, { readonly zh: LocalizedText; readonly en: LocalizedText; readonly ru: LocalizedText }>
+> = texts
 
 /** A key of {@link texts}; a typo is a compile error. */
 export type CodexTextKey = keyof typeof texts
@@ -287,7 +308,11 @@ export function codexLocale(): BackendLocale {
  *  the elicitation flow fills its own placeholders (see
  *  {@link codexElicitationText}). */
 export function codexTemplate(key: CodexTextKey): string {
-  return texts[key][codexLocale()]
+  const text = texts[key][codexLocale()]
+  // The template API carries no `count` (its callers fill placeholders
+  // themselves), so a plural entry resolves to `other`; that is also what zh
+  // does by construction.
+  return typeof text === 'string' ? text : text.other
 }
 
 /**

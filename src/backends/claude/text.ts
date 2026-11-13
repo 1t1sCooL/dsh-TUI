@@ -19,14 +19,16 @@ import type { BackendLocale } from '../../agent/backend.js'
 import type { ElicitationText } from '../shared/elicitation.js'
 import { fillTemplate, pickLocalizedText, type LocalizedText, type TextParams } from '../shared/localized-text.js'
 import { pickPlatformText } from '../shared/platform-text.js'
+import { RU_CLAUDE } from './text.ru.js'
 
 /**
- * Every string of this backend. `zh` and `en` are both required
- * (`scripts/verify-i18n.ts` checks the same invariants the host dictionary
- * gets: language completeness, placeholder parity, single-brace typos, and
- * that no key here is dead).
+ * Every string of this backend (the base copy; Russian lives in `text.ru.ts`
+ * and is merged below). `zh` and `en` are both required here,
+ * `scripts/verify-i18n.ts` checks the same invariants the host dictionary
+ * gets: language completeness across all shipped languages, placeholder
+ * parity, single-brace typos, and that no key here is dead.
  */
-const texts = {
+const baseTexts = {
   'claude-permission-denied': { zh: '{{tool}} 被权限规则拒绝', en: '{{tool}} was denied by a permission rule' },
   'claude-permission-denied-reason': { zh: '{{tool}} 被自动拒绝：{{reason}}', en: '{{tool}} was denied automatically: {{reason}}' },
   'claude-denied-reason': { zh: '拒绝原因：{{reason}}', en: 'Denied: {{reason}}' },
@@ -235,9 +237,27 @@ const texts = {
   ]),
 } as const satisfies Record<string, { readonly zh: LocalizedText; readonly en: LocalizedText }>
 
+type ClaudeBaseKey = keyof typeof baseTexts
+
+// The Russian copy lives in `text.ru.ts`; the compiler names every key missing
+// from it (or left behind by a rename), so a half-translated backend cannot
+// ship silently.
+type assertComplete<T extends never> = T
+type _MissingRuKeys = assertComplete<Exclude<ClaudeBaseKey, keyof typeof RU_CLAUDE>>
+type _UnknownRuKeys = assertComplete<Exclude<keyof typeof RU_CLAUDE, ClaudeBaseKey>>
+
+const texts: Record<
+  ClaudeBaseKey,
+  { readonly zh: LocalizedText; readonly en: LocalizedText; readonly ru: LocalizedText }
+> = Object.fromEntries(
+  Object.entries(baseTexts).map(([key, entry]) => [key, { ...entry, ru: RU_CLAUDE[key as ClaudeBaseKey] }]),
+) as Record<ClaudeBaseKey, { readonly zh: LocalizedText; readonly en: LocalizedText; readonly ru: LocalizedText }>
+
 /** Read-only view of {@link texts} for audits (scripts/verify-i18n.ts and the
  *  backend's own gates), mirroring `i18nDict` on the host side. */
-export const claudeTexts: Readonly<Record<string, { readonly zh: LocalizedText; readonly en: LocalizedText }>> = texts
+export const claudeTexts: Readonly<
+  Record<string, { readonly zh: LocalizedText; readonly en: LocalizedText; readonly ru: LocalizedText }>
+> = texts
 
 /** A key of {@link texts}; a typo is a compile error. */
 export type ClaudeTextKey = keyof typeof texts

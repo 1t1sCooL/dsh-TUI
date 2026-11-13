@@ -163,7 +163,7 @@ npm run package && code --install-extension dsh-tui-vscode-<version>.vsix --forc
 | --- | --- | --- |
 | `dsh-tui-vscode.command` | `dsh-tui` | 启动命令（按宿主 PATH 解析为绝对路径） |
 | `dsh-tui-vscode.extraArgs` | `[]` | 每次启动追加的 CLI 参数，如 `["--lang","en"]` |
-| `dsh-tui-vscode.lang` | `""` | `""`/`zh`/`en`，写入 `DSH_TUI_LANG` |
+| `dsh-tui-vscode.lang` | `""` | `""`/`zh`/`en`/`ru`，写入 `DSH_TUI_LANG` |
 | `dsh-tui-vscode.injectEditor` | `true` | 未设 `$VISUAL`/`$EDITOR` 时导出 `$VISUAL` |
 | `dsh-tui-vscode.editorCommand` | `code -w` | 导出为 `$VISUAL` 的命令 |
 | `dsh-tui-vscode.dshHome` | `""` | 覆盖会话的 `$DSH_HOME`（空 = 继承） |
@@ -242,8 +242,8 @@ TUI 的 `Ctrl+G` 走 `$VISUAL`/`$EDITOR`。想让它在 VS Code 里编辑，
 
 ### 界面语言
 
-`DSH_TUI_LANG` 默认中文；要英文界面，在上述 env 里加
-`"DSH_TUI_LANG": "en"`。
+`DSH_TUI_LANG` 默认中文；要英文界面，在上述 env 里加 `"DSH_TUI_LANG": "en"`；
+要俄文界面，加 `"DSH_TUI_LANG": "ru"`。
 
 ### 已知差异（内置终端）
 

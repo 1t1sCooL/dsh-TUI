@@ -119,10 +119,14 @@ export function brandThemeFor(brand: Brand, themeName: ThemeName): string | unde
 
 /** 开屏欢迎语（品牌档；deepseek 沿用 i18n 的 `logo-tagline`）。英文两行以
  *  `\n` 分隔，渲染层按行拆开居中。 */
-export const BRAND_TAGLINE: Readonly<Record<Brand, { readonly zh: string; readonly en: string }>> = Object.freeze({
-  deepseek: Object.freeze({ zh: '', en: '' }),
-  codex: Object.freeze({ zh: '用 Codex 构建一切', en: 'Build anything with Codex' }),
-  claude: Object.freeze({ zh: '创造精彩，守护关键。', en: "Create what's exciting.\nMaintain what's essential." }),
+export const BRAND_TAGLINE: Readonly<Record<Brand, { readonly zh: string; readonly en: string; readonly ru: string }>> = Object.freeze({
+  deepseek: Object.freeze({ zh: '', en: '', ru: '' }),
+  codex: Object.freeze({ zh: '用 Codex 构建一切', en: 'Build anything with Codex', ru: 'Создавайте что угодно с Codex' }),
+  claude: Object.freeze({
+    zh: '创造精彩，守护关键。',
+    en: "Create what's exciting.\nMaintain what's essential.",
+    ru: 'Создавайте то, что вдохновляет.\nПоддерживайте то, что важно.',
+  }),
 })
 
 /** `/settings` 里 `dsh-tui.brand` 的选项（结构与 `SPLASH_FONT_OPTIONS` 同形）。 */

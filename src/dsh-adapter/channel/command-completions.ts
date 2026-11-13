@@ -2,12 +2,28 @@ import { completeCommands, isCommandCompletionToken, type CommandCompletionNode 
 import { getHiddenTemporarySidePanels, getSidePanelPanels, resolveSidePanelIds } from '../../tuiDisplayPrefs.js'
 import { panelStore } from '../../components/sidePanel/PanelStore.js'
 import { SESSION_COLOR_NAMES } from '../../terminal-utils/sessionColors.js'
-import { getLang, LANGS, t } from '../../i18n.js'
+import { getLang, LANGS, t, type Lang } from '../../i18n.js'
 import { PERMISSION_PRESET_AUTO, permissionPresetKeys } from '../../permissionPresetLabels.js'
 import { AUTO_THEME_NAME } from '../../theme.js'
 import { listThemeCatalog } from '../../themeCatalog.js'
 import { PRESET_NAMES } from '../../components/activityFrames.js'
 import type { ChannelState } from './types.js'
+
+/** The `/lang <id>` rows: each language pitches itself in its own words, and
+ *  the English line is the fallback `description` for surfaces that ignore
+ *  `descriptionKey`. */
+const LANG_SWITCH_DESCRIPTIONS: Record<Lang, string> = {
+  zh: 'Switch the UI language to zh',
+  en: 'Switch the UI language to en',
+  ru: 'Switch the UI language to ru',
+}
+
+/** Dictionary keys behind those rows (see the `sugg-lang-*` family). */
+const SUGG_LANG_DESC_KEYS = {
+  zh: 'sugg-lang-zh-desc',
+  en: 'sugg-lang-en-desc',
+  ru: 'sugg-lang-ru-desc',
+} as const satisfies Record<Lang, string>
 
 /**
  * What a `/plugin install | info` spec may name — the same three shapes the
@@ -81,7 +97,7 @@ export function createCommandCompletions(deps: {
       }
       if (path.length === 1 && path[0] === 'lang') return [
         { name: 'status', description: 'Show the current UI language', descriptionKey: 'sugg-status-desc' },
-        ...LANGS.map(lang => ({ name: lang, description: `Switch the UI language to ${lang}`, descriptionKey: lang === 'zh' ? 'sugg-lang-zh-desc' : 'sugg-lang-en-desc', ...(getLang() === lang ? { tag: 'current' } : {}) })),
+        ...LANGS.map(lang => ({ name: lang, description: LANG_SWITCH_DESCRIPTIONS[lang], descriptionKey: SUGG_LANG_DESC_KEYS[lang], ...(getLang() === lang ? { tag: 'current' } : {}) })),
       ]
       if (path.length === 1 && path[0] === 'theme') return [
         { name: 'status', description: 'Show the current theme', descriptionKey: 'sugg-status-desc' },

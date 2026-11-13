@@ -209,7 +209,7 @@ const supportsNode = (version, range) => {
 const nodeRange = ownPackage?.name === PACKAGE ? ownPackage.engines?.node : undefined
 const nodeSupported = supportsNode(process.versions.node, nodeRange)
 
-const lang = process.env.DSH_TUI_LANG === 'en' ? 'en' : 'zh'
+const lang = process.env.DSH_TUI_LANG === 'en' ? 'en' : process.env.DSH_TUI_LANG === 'ru' ? 'ru' : 'zh'
 const MSG = {
   nodeUnsupported: {
     en: `[dsh-tui] Node ${process.version} is unsupported (required: ${nodeRange}). Install a supported Node release from https://nodejs.org/en/download and reopen this terminal.`,
@@ -578,7 +578,153 @@ const MSG = {
       `其余参数交给 \`dsh --profile ${PROFILE}\` 中的应用。`,
   },
 }
-const msg = key => MSG[key][lang]
+
+// Russian copy of the boot messages. The zh/en pairs above stay the single
+// table `msg()` reads; this block only adds the third language, and repeats
+// the interpolations on purpose (a message and its arguments belong together).
+// A key missing here still renders in English through the `msg()` fallback,
+// so a new message added to MSG cannot crash a Russian launcher.
+const MSG_RU = {
+  nodeUnsupported: `[dsh-tui] Node ${process.version} не поддерживается (требуется: ${nodeRange}). Установите поддерживаемую версию Node с https://nodejs.org/en/download и откройте терминал заново.`,
+  nodeUnknown: `[dsh-tui] Не удалось определить совместимость Node ${process.version}: engines.node в пакете отсутствует или не распознан (${nodeRange ?? 'unknown'}).`,
+  noDsh: '[dsh-tui] CLI dsh не найден. Сначала установите официальный клиент:\n  npm install -g @deepseek-ai/dsh',
+  noPnpm: '[dsh-tui] Для первой установки нужен pnpm (плагин dsh передаёт ему установку):\n  npm install -g pnpm   (или через corepack: corepack enable pnpm)',
+  bootstrapStart: `[dsh-tui] Первый запуск — инициализирую профиль ${PROFILE} (${PACKAGE}@${installVersion})…`,
+  bootstrapRetryW: '[dsh-tui] pnpm отказался писать в корень воркспейса (ERR_PNPM_ADDING_TO_ROOT) — повторяю с -w…',
+  installFailed: `[dsh-tui] Не удалось установить плагин. Повторите вручную позже:\n  dsh plugin --profile ${PROFILE} add -w ${PACKAGE}@${installVersion}`,
+  bootstrapUnreadable: dir =>
+    `[dsh-tui] установка сообщила об успехе, но пакет плагина по-прежнему не читается:\n` +
+    `  ${dir}\n` +
+    `  pnpm считает такой недопоставленный профиль уже актуальным, поэтому каждая\n` +
+    `  повторная попытка «успешна», а запуск по-прежнему падает. Восстановление:\n` +
+    `  rm -rf ${dir} && dsh-tui`,
+  launchFailed: err => `[dsh-tui] Не удалось запустить: ${err.message}`,
+  delegateFailed: path =>
+    `[dsh-tui] не удалось запустить копию из профиля:\n  ${path}\nПереустановите глобальный лаунчер:\n  npm install -g --legacy-peer-deps ${PACKAGE}@latest\n(--legacy-peer-deps обходит падение npm 12 на разрешении peer-зависимостей; лаунчер — тонкая обёртка, поэтому пропуск глобального разрешения peer безопасен.)`,
+  profileExited: code => `[dsh-tui] Профиль dsh завершился с кодом ${code}. Запустите его напрямую для диагностики:\n  dsh --profile ${PROFILE}`,
+  resumeNoLastSession: backend => `[dsh-tui] Нечего продолжать: бэкенд «${backend}» ещё не записал ни одной сессии. Запустите без --resume для новой сессии или укажите её через --resume <id сессии>.`,
+  safeAsk: code => `dsh-tui неожиданно завершился (код ${code}). Перейти в безопасный режим? [Y/n] `,
+  safeHint: code => `[dsh-tui] Завершился с кодом ${code}. Запустите dsh-tui safe для диагностики и подсказок по восстановлению.`,
+  safeRetrySignaled: signal => `[dsh-tui] повтор прерван сигналом: ${signal}`,
+  safeTitle: role => `dsh-tui safe · безопасный режим (плоскость управления только для чтения)  [${role}]`,
+  safeIgnoredArgs: n => `[dsh-tui] проигнорировано лишних аргументов после «safe»: ${n}`,
+  safeListUnreadable: reason => `Опись профиля не читается (${reason}). Подсказки по восстановлению ниже.`,
+  safeGuideIntro: 'Команды восстановления (выполните их сами — безопасный режим только для чтения):',
+  safeRescueCreating: `[dsh-tui] Создаю пустой спасательный профиль (${RESCUE_PROFILE})…`,
+  safeRescueExists: '[dsh-tui] Спасательный профиль уже существует — запускаю его как есть.',
+  safeRescueCreated: '[dsh-tui] Спасательный профиль создан (только base + TUI, без сторонних плагинов) — запускаю его.',
+  safeRescueExistsNonInteractive: `[dsh-tui] Спасательный профиль уже существует и готов — здесь ничего не запущено (нет терминала). Запустите его в терминале: dsh --profile ${RESCUE_PROFILE}`,
+  safeRescueCreatedNonInteractive: `[dsh-tui] Спасательный профиль создан (только base + TUI, без сторонних плагинов) и готов — здесь ничего не запущено (нет терминала). Запустите его в терминале: dsh --profile ${RESCUE_PROFILE}`,
+  safeRescueFailed: detail => `[dsh-tui] Не удалось создать спасательный профиль (${detail}). Смотрите диагностику выше и подсказки (пункт 4).`,
+  safeRescueHomePatch: path =>
+    `[dsh-tui] Спасение отклонено: существует патч-слой уровня home:\n` +
+    `  ${path}\n` +
+    `  dsh накладывает этот файл на КАЖДЫЙ профиль, поэтому сломанный слой здесь\n` +
+    `  ломает и спасение — «чистоту» доказать нельзя, а лаунчер не разбирает YAML\n` +
+    `  и не видит результат композиции. Уберите или почините файл сами (безопасный\n` +
+    `  режим только для чтения) и повторите попытку.`,
+  safeRescueUnrecognized: path =>
+    `[dsh-tui] Спасение отклонено: ${path} существует, но это не распознаваемый профиль\n` +
+    `  (нет корректного корневого package.json), возможно, каталог принадлежит чему-то\n` +
+    `  другому. Установка в неизвестный каталог отклонена. Уберите или удалите его сами:\n` +
+    `  rm -rf ${path}`,
+  safeRescueUnclean: (path, extras) =>
+    `[dsh-tui] Спасение отклонено: существующий профиль ${RESCUE_PROFILE} объявляет\n` +
+    `  сторонние плагины (${extras}), поэтому запуск не будет чистым:\n  ${path}\n` +
+    `  Удалите их сами или удалите профиль и повторите попытку:\n  rm -rf ${path}`,
+  safeRescuePatched: path =>
+    `[dsh-tui] Спасение отклонено: собственный патч-слой профиля содержит записи:\n` +
+    `  ${path}\n` +
+    `  dsh встраивает этот файл в профиль после слоёв бандла, а лаунчер не разбирает\n` +
+    `  YAML и не видит результат композиции — «чистоту» доказать нельзя. Очистите файл\n` +
+    `  (или уберите его) сами и повторите попытку.`,
+  safeRescueStray: (path, stray) =>
+    `[dsh-tui] Спасение отклонено: в ${path} есть записи, созданные не этим лаунчером\n` +
+    `  (${stray}), поэтому удаление недопоставленного профиля стёрло бы ваши файлы.\n` +
+    `  Уберите их сами и повторите попытку (или удалите каталог целиком):\n  rm -rf ${path}`,
+  safeRescueCleanup: path =>
+    `[dsh-tui] недопоставленный профиль удалён (перед удалением проверено, что в нём\n` +
+    `  только файлы, созданные dsh/pnpm), следующая попытка начнётся с чистого листа:\n  ${path}`,
+  safeRescueRemoveFailed: (path, reason) =>
+    `[dsh-tui] не удалось удалить недопоставленный профиль:\n  ${path}\n  ${reason}\n` +
+    `  Удалите его сами и повторите попытку.`,
+  safeMenuLabels: {
+    retry: 'Повторить обычный запуск',
+    doctor: 'Диагностика окружения',
+    inventory: 'Состав плагинов профиля (только чтение)',
+    guide: 'Подсказки по командам восстановления',
+    rescue: 'Создать пустой спасательный профиль и запуститься начисто (dsh-tui-safe)',
+    exit: code => `Выход (код ${code})`,
+    prompt: 'safe> ',
+    invalid: 'Неверный выбор — введите 1-6:',
+    replaySource: ' (повтор)',
+    coldStartSource: ' (холодный старт)',
+    bundlesHeader: 'Слои композиции (dsh.profile.bundles, по порядку):',
+    depsHeader: 'Прямые зависимости (сторонние помечены как кандидаты на удаление):',
+    builtin: 'встроенный',
+    third: 'сторонний',
+  },
+  safeGuideLabels: {
+    missingReason: 'package.json отсутствует или повреждён',
+    fieldsReason: 'обязательные поля отсутствуют или неверного типа',
+    notReadyReason: 'профиль не готов (не установлен или недопоставлен)',
+    uninstallThird: '  # Удалить сторонние плагины (по одному):',
+    nothingThird: '  # Сторонних прямых зависимостей для удаления нет',
+    reinstallTui: '  # Переустановить/выровнять TUI (версию смотрите в dsh-tui doctor):',
+    versionPlaceholder: '<версия>',
+    diagnostics: '  # Диагностика окружения:',
+    globalUpgrade: '  # Глобальное обновление, если лаунчер устарел:',
+    rescueProfile: '  # Спасательный профиль (пустой, без сторонних плагинов; также пункт меню 5):',
+    homePatch: path =>
+      `  # Внимание: патч уровня home ${path}\n` +
+      `  #   накладывается на каждый профиль, включая спасательный, — проверьте его первым`,
+  },
+  notInstalled: '(не установлен)',
+  doctorLabels: {
+    dshMissing: 'не найден — сначала установите его:  npm install -g @deepseek-ai/dsh',
+    pnpmMissing: 'не найден — нужен для установки/обновления:  npm install -g pnpm',
+    profileMissing: 'не установлен — запустите `dsh-tui` один раз для первичной установки',
+    aligned: 'выровнен',
+    profileNewer: v => `профиль новее — выровняйте лаунчер:  npm install -g ${PACKAGE}@${v}`,
+    profileOlder: v => `профиль старее — выровняйте его:  dsh plugin --profile ${PROFILE} add ${PACKAGE}@${v}`,
+    keySet: 'задан',
+    keySetEnv: 'задан (переменная окружения)',
+    keySetStore: 'задан (хранилище учётных данных DSH)',
+    keyMissing: 'не задан — ни DEEPSEEK_API_KEY, ни ссылки в хранилище DSH',
+    missing: 'отсутствует',
+  },
+  updateUnavailable:
+    `[dsh-tui] «update» требует скомпилированную копию профиля, но она отсутствует или слишком стара, чтобы содержать точку входа CLI.\n` +
+    `Обновитесь вручную:\n  dsh plugin --profile ${PROFILE} add ${PACKAGE}@latest`,
+  migrateUnavailable:
+    `[dsh-tui] «migrate» требует скомпилированную копию профиля, но она отсутствует или слишком стара, чтобы содержать точку входа CLI.\n` +
+    `Сначала обновитесь:\n  dsh-tui update`,
+  helpText:
+    `Usage: dsh-tui|dst [команда] [опции] [путь|url]\n\n` +
+    `Команды:\n` +
+    `  run / -p              Выполнить одну неинтерактивную задачу DSH (dst cli --help)\n` +
+    `  cli <команда>         Отдельный CLI автоматизации и команды управления\n` +
+    `  dsh <argv...>         Передать аргументы нативному DSH без изменений\n` +
+    `  update                Выровнять TUI, движок dsh и глобальный лаунчер как один набор\n` +
+    `  migrate [agent]       Импортировать диалоги из claude-code/codex/omp/zcode/grok-build (--dry-run — предпросмотр)\n` +
+    `  doctor                Проверки окружения перед запуском (dsh/pnpm/профиль/ключ)\n` +
+    `  safe                  Безопасный режим: диагностика только для чтения, состав плагинов, подсказки\n` +
+    `  safe --rescue         Создать/проверить чистый спасательный профиль (в терминале сразу запускает его)\n` +
+    `  version               Показать версии лаунчера и профиля\n` +
+    `  help                  Показать эту справку\n\n` +
+    `Опции:\n` +
+    `  --resume [id]         Продолжить последнюю (или указанную) сессию\n` +
+    `  -c, --continue        То же, что --resume\n` +
+    `  --backend <id>        Бэкенд агента: dsh | claude | codex или установленный плагинный бэкенд\n` +
+    `                         (claude, codex и плагинные бэкенды — экспериментальные)\n` +
+    `  -- <prompt...>        Считать оставшиеся аргументы буквальным текстом промпта\n` +
+    `  <путь|url>            Открыть с указанной целью воркспейса\n\n` +
+    `Ведущие опции DSH (например, --dump-config, --patch <путь>) передаются без изменений.\n` +
+    `Остальные аргументы уходят приложению в «dsh --profile ${PROFILE}».`,
+}
+for (const [key, value] of Object.entries(MSG_RU)) MSG[key].ru = value
+
+const msg = key => MSG[key][lang] ?? MSG[key].en
 
 // 与包入口的 force-production-react 保持一致：工作区 NODE_ENV 不能启用
 // React 开发构建的无界渲染插桩，调试须显式设置 DSH_TUI_REACT_DEV=1。
@@ -1676,7 +1822,9 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
       if (!isBackendIdSyntax(backend)) {
         console.error(lang === 'zh'
           ? `非法的 --backend：${backend}（后端 id 只能是小写字母、数字与连字符，最长 32 字符；内置 ${BUILTIN_BACKEND_IDS.join(' / ')}，插件后端需已安装）`
-          : `Invalid --backend: ${backend} (a backend id is lowercase letters, digits and dashes, at most 32 characters; built-in: ${BUILTIN_BACKEND_IDS.join(' or ')} — a plugin backend must be installed)`)
+          : lang === 'ru'
+            ? `Недопустимый --backend: ${backend} (id бэкенда — строчные буквы, цифры и дефисы, не длиннее 32 символов; встроенные: ${BUILTIN_BACKEND_IDS.join(' или ')} — плагинный бэкенд должен быть установлен)`
+            : `Invalid --backend: ${backend} (a backend id is lowercase letters, digits and dashes, at most 32 characters; built-in: ${BUILTIN_BACKEND_IDS.join(' or ')} — a plugin backend must be installed)`)
         process.exit(2)
       }
       process.env.DSH_TUI_BACKEND = backend

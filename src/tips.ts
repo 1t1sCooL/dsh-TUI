@@ -9,16 +9,24 @@
  * - 与 docs/user-guide.md 同源：文档是详版，这里是精版，覆盖全部功能面。
  */
 
+import { TIPS_RU } from './tips.ru.js'
+
 export type TipGroup = 'keys' | 'commands' | 'workflow' | 'display' | 'pitfalls'
 
-export interface Tip {
+export interface TipBase {
   id: string
   group: TipGroup
   zh: string
   en: string
 }
 
-export const TIP_GROUP_LABELS: Record<TipGroup, { zh: string; en: string }> = {
+/** A tip as the UI consumes it: the base copy plus the Russian one. */
+export interface Tip extends TipBase {
+  ru: string
+}
+
+/** The base group labels; Russian lives in `tips.ru.ts` like the tip copy. */
+const TIP_GROUP_LABELS_BASE: Record<TipGroup, { zh: string; en: string }> = {
   keys: { zh: '快捷键', en: 'Shortcuts' },
   commands: { zh: '命令', en: 'Commands' },
   workflow: { zh: '工作流', en: 'Workflow' },
@@ -26,7 +34,16 @@ export const TIP_GROUP_LABELS: Record<TipGroup, { zh: string; en: string }> = {
   pitfalls: { zh: '避坑', en: 'Gotchas' },
 }
 
-export const TIPS: readonly Tip[] = [
+/** Group headings of the `/tips` panel, in every shipped language. */
+export const TIP_GROUP_LABELS: Record<TipGroup, { zh: string; en: string; ru: string }> =
+  Object.fromEntries(
+    Object.entries(TIP_GROUP_LABELS_BASE).map(([group, label]) => [
+      group,
+      { ...label, ru: TIPS_RU.labels[group as keyof typeof TIPS_RU.labels] ?? label.en },
+    ]),
+  ) as Record<TipGroup, { zh: string; en: string; ru: string }>
+
+const TIPS_BASE: readonly TipBase[] = [
   // ── 快捷键 ────────────────────────────────────────────────
   {
     id: 'keys-rewind',
@@ -915,6 +932,15 @@ export const TIPS: readonly Tip[] = [
 ]
 
 /**
+ * The tip pool with every shipped language resolved. `TIPS_RU` is checked for
+ * completeness against these ids by `scripts/verify-i18n.ts`.
+ */
+export const TIPS: readonly Tip[] = TIPS_BASE.map(tip => ({
+  ...tip,
+  ru: TIPS_RU.tips[tip.id as keyof typeof TIPS_RU.tips] ?? tip.en,
+}))
+
+/**
  * 启动随机轮换选择：每次启动随机取一条，让首屏每次都有新鲜感。
  * random 可注入以便测试固定（默认 Math.random）。
  */
@@ -925,4 +951,17 @@ export function pickRandomTip(random: () => number = Math.random): Tip {
 /** 按分组取 tips（/tips 面板展示用，保持 TIPS 内顺序）。 */
 export function tipsByGroup(group: TipGroup): Tip[] {
   return TIPS.filter(tip => tip.group === group)
+}
+
+/** The copy of one tip in `lang`, falling back to English for a language that
+ *  does not carry tip copy (the dictionary itself stays the authority for the
+ *  rest of the UI). */
+export function tipText(tip: Tip, lang: string): string {
+  return lang === 'zh' ? tip.zh : lang === 'ru' ? tip.ru : tip.en
+}
+
+/** The heading of one tip group in `lang`. */
+export function tipGroupLabel(group: TipGroup, lang: string): string {
+  const label = TIP_GROUP_LABELS[group]
+  return lang === 'zh' ? label.zh : lang === 'ru' ? label.ru : label.en
 }

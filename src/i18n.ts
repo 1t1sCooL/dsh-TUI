@@ -1,10 +1,10 @@
 /**
- * dsh-tui localization — UI strings for Chinese (`zh`, the default) and
- * English (`en`).
+ * dsh-tui localization — UI strings for Chinese (`zh`, the default),
+ * English (`en`) and Russian (`ru`).
  *
  * Resolution order mirrors the `/theme` mechanism (see themePrefs.ts):
  *
- *   1. `DSH_TUI_LANG` env var (`en` / `zh`) — pinned at process start
+ *   1. `DSH_TUI_LANG` env var (`en` / `zh` / `ru`) — pinned at process start
  *   2. `lang` cordis.yml config key (see Config in index.ts)
  *   3. the persisted `/lang` choice in `~/.dsh-tui/lang.json`
  *   4. the OS locale guess (`LC_ALL` / `LC_MESSAGES` / `LANG`)
@@ -13,17 +13,22 @@
  * `/lang` switches at runtime and hot-swaps the whole UI. The dictionary is
  * a flat key → per-language text map; `t(key, params)` substitutes
  * `{{name}}` placeholders with the given params. A per-language value is
- * either a plain template or `{ one, other }` plural forms selected via
- * `Intl.PluralRules` on the `count` param (zh has no grammatical number and
- * always resolves to `other`). Missing keys render the key itself so a typo
- * is visible in the UI instead of silently blank.
+ * either a plain template or plural forms (`one` / `few` / `many` / `other`)
+ * selected via `Intl.PluralRules` on the `count` param: zh has no
+ * grammatical number and always resolves to `other`, en selects `one`
+ * exactly at count 1, ru selects `one` for 1/21/31, `few` for 2–4, `many`
+ * for 0 and 5–20. A form a language does not need falls back to `other`, so
+ * an entry may carry only the forms its sentence actually varies in.
+ * Missing keys render the key itself so a typo is visible in the UI instead
+ * of silently blank.
  *
- * The dictionary shape is enforced at compile time (`satisfies` below):
- * every entry carries zh, and en is optional only for the `cmd-desc-*`
- * family whose en truth lives in the command registry (see {@link tOr}).
- * scripts/verify-i18n.ts adds the checks types cannot express: placeholder
- * parity between languages, single-brace typos, dead keys, and English
- * UI-copy literals outside the dictionary (issue #980's leak shape).
+ * The base dictionary (`baseDict` below) carries zh plus en; the Russian
+ * copy lives beside it in `src/i18n.ru.ts`, merged in at the bottom. The
+ * split keeps a translation PR from rewriting every base entry, and the
+ * merge is still completeness-checked at compile time: `RU` is typed
+ * `Record<I18nKey, I18nText>` (see `assertComplete`), so a missing or
+ * stale key names itself in the type error, and `scripts/verify-i18n.ts`
+ * checks plural form and placeholder parity across all three languages.
  *
  * ## Adding a language (e.g. `ja`) — the full checklist
  *
@@ -35,18 +40,16 @@
  *   1. `Lang` union + `LANGS` display order (this file).
  *   2. `isLang()` — add the literal.
  *   3. `pluralRules` — add `new Intl.PluralRules('<tag>')`; if the language
- *      uses CLDR categories beyond one/other (ru/pl/ar…), widen `I18nText`
- *      to carry them and extend `pickText` accordingly.
- *   4. Dictionary type below: add `ja?: I18nText` to the `satisfies` shape.
- *      Decide optionality deliberately: required = compile error per missing
- *      key (recommended — a half-translated UI is worse than none); optional
- *      = `t()` renders the raw key for gaps, so also give `t()`/`tOr()` an
- *      explicit fallback order (e.g. ja → en → key) if you go optional.
- *   5. scripts/verify-i18n.ts: the completeness loop (§1) hardcodes the
- *      ['zh','en'] pair — extend it, and re-review FORBIDDEN_LITERALS
- *      (English sentences stay banned outside the dict; add the new
- *      language's equivalents only if the leak shape repeats).
- *   6. Translate the dictionary (~1k keys today); zh comments above each
+ *      uses CLDR categories beyond one/other (ru/pl/ar…), widen
+ *      `PluralForms` to carry them and extend `pickText` accordingly.
+ *   4. Translation file: `src/i18n.<tag>.ts` exporting the map, filed in
+ *      beside `src/i18n.ru.ts`; decide whether `dict` requires it
+ *      (recommended — a half-translated UI is worse than none; that is what
+ *      `assertComplete` enforces for ru).
+ *   5. scripts/verify-i18n.ts: `SHIPPED_LANGS` drives the completeness and
+ *      placeholder loops — add the tag there, and translate the extra
+ *      command-completion keys (`sugg-lang-<tag>-desc`).
+ *   6. Translate the dictionary (~2.2k keys today); zh comments above each
  *      key family describe tone/register — keep them.
  *   7. `detectLocaleLang()` — map the new tag in the OS-locale guess.
  *   8. Rendered-output regression: extend scripts/verify-toolcard-i18n.tsx
@@ -58,23 +61,42 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DATA_DIR } from './utils/paths.js'
 import { PLATFORM_TEXT } from './backends/shared/platform-text.js'
+import { RU } from './i18n.ru.js'
 
-export type Lang = 'zh' | 'en'
+export type Lang = 'zh' | 'en' | 'ru'
 
 const PREFS_DIR = DATA_DIR
 
 /** The languages shipped with the plugin, in display order. */
-export const LANGS = ['zh', 'en'] as const
+export const LANGS = ['zh', 'en', 'ru'] as const
+
+/**
+ * The plural forms an entry may carry. `other` is the only mandatory one:
+ * zh and en need `one` + `other`, ru needs `one` + `few` + `many` + `other`,
+ * and a sentence that does not vary with the count is a plain string. A
+ * language whose CLDR categories go beyond these (pl, ar) widens this type
+ * and `pickText`.
+ */
+export interface PluralForms {
+  readonly one?: string
+  readonly few?: string
+  readonly many?: string
+  readonly other: string
+}
 
 /**
  * One dictionary value in one language: a plain `{{name}}` template, or
  * plural forms picked by the `count` param through `Intl.PluralRules`.
- * Only `one`/`other` exist because those are the only CLDR categories zh
- * and en use; a third shipped language may need more.
  */
-export type I18nText = string | { one: string; other: string }
+export type I18nText = string | PluralForms
 
-const dict = {
+/**
+ * The base dictionary: zh is the original copy, en the first translation.
+ * Russian is filed beside it (`src/i18n.ru.ts`) and merged below, so adding
+ * a third language does not rewrite 2.2k base entries and a review diff stays
+ * readable.
+ */
+const baseDict = {
   // ── 平台文案：真源在 src/backends/shared/platform-text.ts ────────────
   // 这 10 条是宿主界面与内置后端渲染的同一批字符串（状态行的速率窗口、
   // /doctor、/rename、回退、工具卡名）。真源放在后端中立缝里：后端读不到宿主
@@ -1214,6 +1236,7 @@ const dict = {
   'sugg-status-desc': { zh: '显示当前选择', en: 'Show the current choice' },
   'sugg-lang-zh-desc': { zh: '切换界面语言到中文', en: 'Switch the UI language to Chinese' },
   'sugg-lang-en-desc': { zh: '切换界面语言到英文', en: 'Switch the UI language to English' },
+  'sugg-lang-ru-desc': { zh: '切换界面语言到俄语', en: 'Switch the UI language to Russian' },
   'sugg-theme-auto-desc': { zh: '跟随终端背景自动切换', en: 'Follow the terminal background' },
   'sugg-theme-builtin-desc': { zh: '内置主题', en: 'Built-in theme' },
   'sugg-theme-user-desc': { zh: '用户主题（{{base}} 基底）', en: 'User theme ({{base}} base)' },
@@ -2590,7 +2613,7 @@ const dict = {
   'cmd-desc-preset': { zh: '切换 Agent 预设（含梁神模式）' },
   'cmd-desc-theme': { zh: '切换配色主题（auto 跟随系统，或内置/静态 JSON/插件主题）' },
   'cmd-desc-color': { zh: '设置当前会话强调色（输入框边框与会话标签）' },
-  'cmd-desc-lang': { zh: '切换界面语言（en / zh）' },
+  'cmd-desc-lang': { zh: '切换界面语言（en / zh / ru）' },
   'cmd-desc-model': { zh: '查看当前模型' },
   'cmd-desc-thinking': { zh: '显示或隐藏思考过程' },
   'cmd-desc-tokens': { zh: '查看会话 token 用量' },
@@ -2627,11 +2650,12 @@ const dict = {
   'lang-switch-hint': { zh: '切换      /lang en | /lang zh', en: 'Switch      /lang en | /lang zh' },
   'lang-persist-hint': { zh: '持久化    ~/.dsh-tui/lang.json（重启后仍生效；DSH_TUI_LANG 优先）', en: 'Persisted    ~/.dsh-tui/lang.json (survives restart; DSH_TUI_LANG wins)' },
   'lang-switched': { zh: '语言已切换：{{lang}}（已保存）', en: 'Language switched: {{lang}} (saved)' },
-  'lang-unknown': { zh: '未知语言「{{lang}}」· /lang 查看全部（en / zh）', en: 'Unknown language "{{lang}}" · /lang to view all (en / zh)' },
+  'lang-unknown': { zh: '未知语言「{{lang}}」· /lang 查看全部（en / zh / ru）', en: 'Unknown language "{{lang}}" · /lang to view all (en / zh / ru)' },
   'lang-switch-failed': { zh: '语言「{{lang}}」切换失败（无法写入 ~/.dsh-tui/lang.json）', en: 'Language "{{lang}}" switch failed (cannot write ~/.dsh-tui/lang.json)' },
   'lang-picker-title': { zh: '界面语言', en: 'UI language' },
   'lang-zh-desc': { zh: '简体中文（默认）', en: 'Simplified Chinese (default)' },
   'lang-en-desc': { zh: 'English（英文）', en: 'English' },
+  'lang-ru-desc': { zh: '俄语', en: 'Russian' },
 
   // ── screens/StatusLine.tsx ───────────────────────────────────────────
   'status-cache-label': { zh: '缓存 ', en: 'cache ' },
@@ -3046,8 +3070,29 @@ const dict = {
   'cmd-desc-setup': { zh: '重跑首次引导（账号与模型接入 / 语言主题 / 模型工作区 / 快捷键）' },
 } as const satisfies Record<string, { zh: I18nText; en?: I18nText }>
 
-export type I18nKey = keyof typeof dict
+export type I18nKey = keyof typeof baseDict
 export type I18nParams = Record<string, string | number>
+
+/** One entry once every shipped language is merged in. */
+type MergedEntry = { readonly zh: I18nText; readonly en?: I18nText; readonly ru: I18nText }
+
+// A translation file must name every base key and nothing else. `assertComplete`
+// turns both mistakes into a compile error that prints the offending keys: a
+// half-translated UI is worse than no translation, and a key left behind by a
+// rename is dead weight (verify-i18n reports it as well, for the case where a
+// language file is not wired in at all).
+type assertComplete<T extends never> = T
+type _MissingRuKeys = assertComplete<Exclude<I18nKey, keyof typeof RU>>
+type _UnknownRuKeys = assertComplete<Exclude<keyof typeof RU, I18nKey>>
+
+/**
+ * The merged dictionary every consumer reads: the base entries plus the
+ * Russian copy. Hand-rolled `Object.fromEntries` because the literal type has
+ * to survive the merge (see {@link I18nKey}).
+ */
+const dict: Readonly<Record<I18nKey, MergedEntry>> = Object.fromEntries(
+  Object.entries(baseDict).map(([key, entry]) => [key, { ...entry, ru: RU[key as I18nKey] }]),
+) as Readonly<Record<I18nKey, MergedEntry>>
 
 /** The active language, module-level so non-React modules (channel.ts,
  *  loaded-context.ts) resolve strings without a context. Defaults to `zh`
@@ -3080,7 +3125,7 @@ export function setLang(lang: Lang): void {
 
 /** Is a string a valid shipped language code? */
 export function isLang(value: unknown): value is Lang {
-  return value === 'zh' || value === 'en'
+  return value === 'zh' || value === 'en' || value === 'ru'
 }
 
 /**
@@ -3096,18 +3141,34 @@ export function t(key: I18nKey, params: I18nParams = {}): string {
 }
 
 // Cached per shipped language; CLDR-backed and built into Node, so zh always
-// selects `other` and en selects `one` exactly at count 1.
+// selects `other`, en selects `one` exactly at count 1, and ru selects `one`
+// for 1/21/31, `few` for 2–4 and `many` for 0 and 5–20.
 const pluralRules: Record<Lang, Intl.PluralRules> = {
   zh: new Intl.PluralRules('zh'),
   en: new Intl.PluralRules('en'),
+  ru: new Intl.PluralRules('ru'),
 }
 
-/** Resolve plural forms to one template using the `count` param. */
+/**
+ * Resolve plural forms to one template using the `count` param. A form the
+ * entry does not carry falls back to `other`: an author may write only the
+ * forms their sentence varies in, and a translator who drops `few` gets a
+ * grammatical `other` instead of a blank.
+ */
 function pickText(text: I18nText | undefined, params: I18nParams): string | undefined {
   if (text === undefined || typeof text === 'string') return text
   const count = Number(params.count)
   const category = pluralRules[activeLang].select(Number.isFinite(count) ? count : 0)
-  return category === 'one' ? text.one : text.other
+  switch (category) {
+    case 'one':
+      return text.one ?? text.other
+    case 'few':
+      return text.few ?? text.other
+    case 'many':
+      return text.many ?? text.other
+    default:
+      return text.other
+  }
 }
 
 /** Substitute `{{name}}` placeholders, leaving unknown names visible. */
@@ -3133,7 +3194,9 @@ export function tOr(key: string, fallback: string, params: I18nParams = {}): str
 }
 
 /** Read-only view of the dictionary for audits (scripts/verify-i18n.ts). */
-export const i18nDict: Readonly<Record<string, { readonly zh?: I18nText; readonly en?: I18nText }>> = dict
+export const i18nDict: Readonly<
+  Record<string, { readonly zh?: I18nText; readonly en?: I18nText; readonly ru?: I18nText }>
+> = dict
 
 // ── persistence (~/.dsh-tui/lang.json) ─────────────────────────────────
 
@@ -3177,15 +3240,15 @@ export function writeLangPref(lang: Lang, dir: string = PREFS_DIR): boolean {
 /**
  * Guess the user's language from the OS locale (`LC_ALL`, `LC_MESSAGES`,
  * `LANG`). Only consulted when nothing else (env var, cordis.yml `lang`,
- * persisted `/lang` choice) pinned a language. `zh*` maps to zh; every
- * other stated locale (en, but also fr/de/ja/…) maps to en — English is
- * the lingua-franca fallback for a locale we don't ship, and a German
- * user must not get a Chinese UI. The POSIX/C locale means "no locale
- * selected" and conventionally maps to English — importantly it is what
- * CI runners (LANG=C.UTF-8) report, so tests asserting English UI copy
- * stay deterministic. Only an ABSENT locale (typical on Windows, where
- * these POSIX vars don't exist and imply nothing about the user) keeps
- * the zh default.
+ * persisted `/lang` choice) pinned a language. `zh*` maps to zh, `ru*` to
+ * ru; every other stated locale (en, but also fr/de/ja/…) maps to en —
+ * English is the lingua-franca fallback for a locale we don't ship, and a
+ * German user must not get a Chinese UI. The POSIX/C locale means "no
+ * locale selected" and conventionally maps to English — importantly it is
+ * what CI runners (LANG=C.UTF-8) report, so tests asserting English UI
+ * copy stay deterministic. Only an ABSENT locale (typical on Windows,
+ * where these POSIX vars don't exist and imply nothing about the user)
+ * keeps the zh default.
  */
 export function detectLocaleLang(): Lang {
   // `||` (not `??`): an EMPTY locale variable means "unset" and must fall
@@ -3197,7 +3260,9 @@ export function detectLocaleLang(): Lang {
     ''
   const locale = raw.split('.')[0]?.toLowerCase() ?? ''
   if (locale === '') return 'zh'
-  return locale.startsWith('zh') ? 'zh' : 'en'
+  if (locale.startsWith('zh')) return 'zh'
+  if (locale.startsWith('ru')) return 'ru'
+  return 'en'
 }
 
 /**

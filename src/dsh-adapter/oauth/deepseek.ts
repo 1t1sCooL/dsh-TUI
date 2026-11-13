@@ -123,6 +123,8 @@ const tuiVersion = (() => {
 export function deepSeekClientMetadata(): AccountClientMetadata {
   return {
     version: tuiVersion,
+    // The platform advertises no Russian locale; ru falls back to en-US rather
+    // than claiming a tag the service may not know.
     locale: getLang() === 'zh' ? 'zh-CN' : 'en-US',
     timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
   }

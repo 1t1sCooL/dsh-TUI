@@ -1,7 +1,8 @@
 /**
  * i18n 字典静态门禁（verify:build 的一环）：类型系统管不到的六类静默失败——
- *   1. 语言完整性：非 cmd-desc-* 条目必须同时携带 zh 与 en（cmd-desc-* 的 en
- *      真源在命令注册表，字典只带 zh，见 i18n.ts 的 tOr 注释）；
+ *   1. 语言完整性：每条必须携带 zh 与 ru；非 cmd-desc-* 条目还必须携带 en
+ *      （cmd-desc-* 的 en 真源在命令注册表，字典只带 zh/ru，见 i18n.ts 的
+ *      tOr 注释）；
  *   2. 占位符：单花括号 `{name}` 是 `{{name}}` 的手误，t() 不替换、原样上屏；
  *      zh/en 的 `{{name}}` 名字集合互不为子集时视为改名漂移（一侧刻意省略
  *      占位符是合法本地化，如 en 单数句去掉 {{n}}，所以只拦"两侧都有但
@@ -20,15 +21,19 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { i18nDict, type I18nText } from '../src/i18n.js'
+import { i18nDict, setLang, t, type I18nKey, type I18nText } from '../src/i18n.js'
 import { claudeTexts } from '../src/backends/claude/text.js'
 import { codexTexts } from '../src/backends/codex/text.js'
 import { PLATFORM_TEXT, type PlatformTextKey } from '../src/backends/shared/platform-text.js'
 import { SPINNER_VERBS } from '../src/terminal-utils/spinnerVerbs.js'
+import { TIPS, TIP_GROUP_LABELS } from '../src/tips.js'
+import { TIPS_RU } from '../src/tips.ru.js'
+import { SETTING_DEFINITIONS } from '../src/settings/definitions.js'
+import { SETTINGS_RU } from '../src/settings/definitions.ru.js'
 
 /** Dictionaries a backend carries itself (B-3, B-5), audited with the same
  *  rules minus the dead-key one (see the section at the end). */
-const BACKEND_TEXT_MODULES: readonly { readonly module: string; readonly dict: Readonly<Record<string, { readonly zh?: I18nText; readonly en?: I18nText }>> }[] = [
+const BACKEND_TEXT_MODULES: readonly { readonly module: string; readonly dict: Readonly<Record<string, { readonly zh?: I18nText; readonly en?: I18nText; readonly ru?: I18nText }>> }[] = [
   { module: 'src/backends/claude/text.ts', dict: claudeTexts },
   { module: 'src/backends/codex/text.ts', dict: codexTexts },
 ]
@@ -47,6 +52,9 @@ const PLATFORM_TEXT_SOURCE = 'src/backends/shared/platform-text.ts'
 //   preset-name-* / preset-desc-*   src/dsh-adapter/channel/model-actions.ts   tOr(`preset-name-${presetDisplayId(preset.id)}`) — built-in preset display text
 const DYNAMIC_PREFIXES = ['cmd-desc-', 'traj-sort-', 'traj-proj-', 'logo-drift-', 'spinner-verb-', 'tree-filter-', 'tree-kind-', 'preset-name-', 'preset-desc-', 'agent-message-delivery-', 'agent-message-via-', 'team-status-']
 
+/** 随包发行的语言。加语言时先改这里，§1/§2/§5 的循环自动跟上。 */
+const SHIPPED_LANGS = ['zh', 'en', 'ru'] as const
+
 let failures = 0
 function fail(msg: string) {
   failures++
@@ -60,7 +68,10 @@ for (const verb of SPINNER_VERBS) {
 
 function forms(text: I18nText | undefined): string[] {
   if (text === undefined) return []
-  return typeof text === 'string' ? [text] : [text.one, text.other]
+  if (typeof text === 'string') return [text]
+  // `one`/`few`/`many` are optional per language (ru fills few/many, zh fills
+  // none); `other` is the one form every plural entry must carry.
+  return [text.one, text.few, text.many, text.other].filter((form): form is string => form !== undefined)
 }
 
 function placeholders(text: I18nText | undefined): Set<string> {
@@ -78,20 +89,30 @@ function isSubset(a: Set<string>, b: Set<string>): boolean {
 
 // ── 1+2：逐条目检查语言完整性与占位符 ─────────────────────────────────
 const singleBrace = /(?<!\{)\{(\w+)\}(?!\})/
+
+/** 一侧刻意省略占位符是合法本地化（如 en 单数句去掉 {{n}}），所以只拦
+ *  "两侧都有但名字对不上"——与原来 zh↔en 的判据一致，扩展到每个语言。 */
+function checkPlaceholders(key: string, zh: I18nText, other: I18nText | undefined, lang: string): void {
+  if (other === undefined) return
+  const a = placeholders(zh)
+  const b = placeholders(other)
+  if (!isSubset(a, b) && !isSubset(b, a)) {
+    fail(`${key}: 占位符名不一致 zh={{${[...a].join(',')}}} ${lang}={{${[...b].join(',')}}}`)
+  }
+}
+
 for (const [key, entry] of Object.entries(i18nDict)) {
   if (entry.zh === undefined) fail(`${key}: 缺 zh`)
   if (entry.en === undefined && !key.startsWith('cmd-desc-')) fail(`${key}: 缺 en`)
-  for (const lang of ['zh', 'en'] as const) {
+  if (entry.ru === undefined) fail(`${key}: 缺 ru`)
+  for (const lang of SHIPPED_LANGS) {
     for (const form of forms(entry[lang])) {
       const m = singleBrace.exec(form)
       if (m) fail(`${key}.${lang}: 单花括号 {${m[1]}}——t() 不替换，应为 {{${m[1]}}}`)
     }
   }
-  const zh = placeholders(entry.zh)
-  const en = placeholders(entry.en)
-  if (entry.en !== undefined && !isSubset(zh, en) && !isSubset(en, zh)) {
-    fail(`${key}: 占位符名不一致 zh={{${[...zh].join(',')}}} en={{${[...en].join(',')}}}`)
-  }
+  checkPlaceholders(key, entry.zh, entry.en, 'en')
+  checkPlaceholders(key, entry.zh, entry.ru, 'ru')
 }
 
 // ── 3：死 key（src/ 与 scripts/ 全量字面扫描 + 拼接前缀放行）──────────
@@ -100,9 +121,10 @@ const files = [...new Set(execFileSync('git', ['ls-files', '-z', '--cached', '--
   .filter(f => /\.(ts|tsx|mjs|cjs|js)$/.test(f))
   .filter(f => existsSync(f))
   // 字典文件自身不算"使用"：条目就定义在里面，否则任何死 key 都能被自己的
-  // 定义救活。平台文案真源（C-2）同理——它里面的键是定义，消费点在宿主字典
-  // 与两个后端（各以字面量引用，见 §6）。
-  .filter(f => f !== 'src/i18n.ts' && f !== 'scripts/verify-i18n.ts' && f !== PLATFORM_TEXT_SOURCE)
+  // 定义救活；译文文件（i18n.ru.ts）与字典同构，同样不能当消费点。平台文案
+  // 真源（C-2）同理——它里面的键是定义，消费点在宿主字典与两个后端（各以
+  // 字面量引用，见 §6）。
+  .filter(f => f !== 'src/i18n.ts' && f !== 'src/i18n.ru.ts' && f !== 'scripts/verify-i18n.ts' && f !== PLATFORM_TEXT_SOURCE)
 let corpus = ''
 for (const f of files) {
   // Worktrees may have deleted tracked files before a later commit; a missing
@@ -144,17 +166,15 @@ for (const { module, dict } of BACKEND_TEXT_MODULES) {
   for (const [key, entry] of Object.entries(dict)) {
     if (entry.zh === undefined) fail(`${module}: ${key}: 缺 zh`)
     if (entry.en === undefined) fail(`${module}: ${key}: 缺 en`)
-    for (const lang of ['zh', 'en'] as const) {
+    if (entry.ru === undefined) fail(`${module}: ${key}: 缺 ru`)
+    for (const lang of SHIPPED_LANGS) {
       for (const form of forms(entry[lang])) {
         const m = singleBrace.exec(form)
         if (m) fail(`${module}: ${key}.${lang}: 单花括号 {${m[1]}}——模板只替换 {{${m[1]}}}`)
       }
     }
-    const zh = placeholders(entry.zh)
-    const en = placeholders(entry.en)
-    if (entry.en !== undefined && !isSubset(zh, en) && !isSubset(en, zh)) {
-      fail(`${module}: ${key}: 占位符名不一致 zh={{${[...zh].join(',')}}} en={{${[...en].join(',')}}}`)
-    }
+    checkPlaceholders(`${module}: ${key}`, entry.zh, entry.en, 'en')
+    checkPlaceholders(`${module}: ${key}`, entry.zh, entry.ru, 'ru')
   }
 }
 
@@ -211,6 +231,69 @@ for (const { module, dict, keys } of PLATFORM_TEXT_CONSUMERS) {
       if (entry[lang] !== PLATFORM_TEXT[key][lang]) {
         fail(`${module}: ${key}.${lang}: 与 ${PLATFORM_TEXT_SOURCE} 不一致（不得另写副本）${JSON.stringify(entry[lang])} ≠ ${JSON.stringify(PLATFORM_TEXT[key][lang])}`)
       }
+    }
+  }
+}
+
+// ── 7：启动 tip 的译文完整性 ───────────────────────────────────────────
+// Tips 自带一份小字典（`src/tips.ru.ts`），键不是 i18n 字典的键，所以单独
+// 查：每个 id 都要有 ru，且不能留下已删除 id 的译文；占位符同样不能改名。
+const tipIds = new Set(TIPS.map(tip => tip.id))
+for (const tip of TIPS) {
+  const ru = TIPS_RU.tips[tip.id]
+  if (ru === undefined) {
+    fail(`tips.ru.ts: ${tip.id}: 缺 ru`)
+    continue
+  }
+  const m = singleBrace.exec(ru)
+  if (m) fail(`tips.ru.ts: ${tip.id}: 单花括号 {${m[1]}}`)
+  const enNames = placeholders(tip.en)
+  const ruNames = placeholders(ru)
+  if (!isSubset(enNames, ruNames) && !isSubset(ruNames, enNames)) {
+    fail(`tips.ru.ts: ${tip.id}: 占位符名不一致 en={{${[...enNames].join(',')}}} ru={{${[...ruNames].join(',')}}}`)
+  }
+}
+for (const id of Object.keys(TIPS_RU.tips)) {
+  if (!tipIds.has(id)) fail(`tips.ru.ts: ${id}: 死译文——TIPS 里没有这个 id`)
+}
+for (const group of Object.keys(TIP_GROUP_LABELS)) {
+  if (TIPS_RU.labels[group as keyof typeof TIPS_RU.labels] === undefined) fail(`tips.ru.ts: 分组 ${group} 缺 ru`)
+}
+
+// ── 8：/settings 字段与选项的 ru 完整性 ────────────────────────────────
+// 设置页的文案不在 i18n 字典里，而是 definitions 的 label/hint/options；
+// 译文在 definitions.ru.ts。缺一个 label、hint 或某个下拉选项，页面上就会
+// 冒出一行英文——这里按键逐个查。
+for (const [key, definition] of Object.entries(SETTING_DEFINITIONS)) {
+  const ru = SETTINGS_RU[key as keyof typeof SETTINGS_RU] as
+    | { readonly label: string; readonly hint: string; readonly options?: Readonly<Record<string, string>> }
+    | undefined
+  if (ru === undefined) {
+    fail(`settings.ru: ${key}: 缺整条译文`)
+    continue
+  }
+  if (ru.label === '') fail(`settings.ru: ${key}: label 为空`)
+  if (definition.hint !== undefined && ru.hint === '') fail(`settings.ru: ${key}: hint 为空`)
+  for (const option of definition.options ?? []) {
+    if (ru.options?.[option.value] === undefined) fail(`settings.ru: ${key}: 选项 ${option.value} 缺 ru`)
+  }
+}
+
+// ── 9：ru 复数的运行时接线 ─────────────────────────────────────────────
+// 上面查的是字典形状；这里证明 `pickText` 真的按 CLDR 选对形式——1 取
+// one、3 取 few、5 取 many、1.5 取 other。期望值取自字典本身，断言的是
+// 「选中的形式对不对」，不是译文内容。
+setLang('ru')
+for (const [key, entry] of Object.entries(i18nDict)) {
+  const forms = entry.ru
+  if (forms === undefined || typeof forms === 'string') continue
+  for (const [count, form] of [[1, 'one'], [3, 'few'], [5, 'many'], [1.5, 'other']] as const) {
+    // `t()` substitutes `{{count}}`; compare against the same substitution so
+    // the assertion is about which form was picked, not about the text.
+    const expected = (forms[form] ?? forms.other).replace(/\{\{count\}\}/g, String(count))
+    const actual = t(key as I18nKey, { count })
+    if (actual !== expected) {
+      fail(`${key}: ru count=${count} 选到 ${JSON.stringify(actual)}，期望 ${JSON.stringify(expected)}`)
     }
   }
 }

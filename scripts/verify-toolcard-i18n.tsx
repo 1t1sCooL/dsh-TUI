@@ -20,7 +20,7 @@
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'zh'
 
-const [{ Writable }, React, { Terminal: XTerm }, { render }, { AssistantToolUseMessage }, { setLang }, { settled }] = await Promise.all([
+const [{ Writable }, React, { Terminal: XTerm }, { render }, { AssistantToolUseMessage }, { setLang, t }, { settled }] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
@@ -214,6 +214,35 @@ async function runPass(lang: 'zh' | 'en') {
 
 await runPass('zh')
 await runPass('en')
+
+// ── Pass (ru): the third shipped language renders through the same path ──
+// Expected strings come from the dictionary itself, so the assertion is about
+// the render path (the card really calls `t()`), not about the translation
+// being re-typed in a second place.
+{
+  setLang('ru')
+  const ruCases: { id: string; tool: Record<string, unknown>; expect: string }[] = [
+    {
+      id: 'exit-code-line',
+      tool: SCENARIOS.find(s => s.id === 'exit-code-line')!.tool,
+      expect: t('tool-exit-code', { code: 1 }),
+    },
+    {
+      id: 'signal-line',
+      tool: SCENARIOS.find(s => s.id === 'signal-line')!.tool,
+      expect: t('tool-killed-signal', { name: 'SIGKILL' }),
+    },
+  ]
+  for (const ruCase of ruCases) {
+    app.rerender(React.createElement(AssistantToolUseMessage, {
+      key: `${ruCase.id}-ru`,
+      tool: { ...base, ...ruCase.tool },
+      marginTopOnTurn: false,
+      verbose: false,
+    }))
+    check(`[ru] ${ruCase.id}: 「${ruCase.expect}」上屏`, await settled(() => screenOf(rig.term).includes(ruCase.expect)))
+  }
+}
 
 // Header accent split (same card cluster; not i18n): the leading word carries
 // the tool tone, and a title written as `Name(args)` — the terminal card's

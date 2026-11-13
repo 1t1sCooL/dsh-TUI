@@ -3,16 +3,24 @@
  *
  * A backend writes its user-facing strings itself (D2: the host dictionary is
  * not readable from a backend), in the shape `src/i18n.ts` uses —
- * `{{name}}` placeholders and, where a language marks number, a `one`/`other`
- * pair selected on the `count` parameter. The *mechanism* is shared so two
+ * `{{name}}` placeholders and, where a language marks number, plural forms
+ * (`one` / `few` / `many` / `other`) selected on the `count` parameter. The
+ * *mechanism* is shared so two
  * backends cannot disagree about what `{{name}}` or `count` means; the
  * *dictionary* stays with each backend.
  */
 import type { BackendLocale } from '../../agent/backend.js'
 
-/** One string in the languages the TUI ships: a plain template, or the
- *  `one`/`other` plural forms selected on the `count` parameter. */
-export type LocalizedText = string | { readonly one: string; readonly other: string }
+/** One string in the languages the TUI ships: a plain template, or the plural
+ *  forms selected on the `count` parameter. `other` is the only mandatory
+ *  form — zh needs `one`+`other`, en needs `one`+`other`, ru needs
+ *  `one`+`few`+`many`+`other` — and a missing form falls back to `other`. */
+export type LocalizedText = string | {
+  readonly one?: string
+  readonly few?: string
+  readonly many?: string
+  readonly other: string
+}
 
 /** Values substituted into a template (`{{name}}`). */
 export type TextParams = Readonly<Record<string, string | number>>
@@ -27,10 +35,12 @@ export function fillTemplate(template: string, params: TextParams): string {
 }
 
 // CLDR-backed and built into Node: zh always selects `other` (the language has
-// no grammatical number), en selects `one` exactly at 1.
+// no grammatical number), en selects `one` exactly at 1, ru selects `one` for
+// 1/21/31, `few` for 2–4 and `many` for 0 and 5–20.
 const pluralRules: Record<BackendLocale, Intl.PluralRules> = {
   zh: new Intl.PluralRules('zh'),
   en: new Intl.PluralRules('en'),
+  ru: new Intl.PluralRules('ru'),
 }
 
 /**
@@ -42,5 +52,14 @@ export function pickLocalizedText(text: LocalizedText | undefined, locale: Backe
   if (text === undefined || typeof text === 'string') return text
   const count = Number(params.count)
   const category = pluralRules[locale].select(Number.isFinite(count) ? count : 0)
-  return category === 'one' ? text.one : text.other
+  switch (category) {
+    case 'one':
+      return text.one ?? text.other
+    case 'few':
+      return text.few ?? text.other
+    case 'many':
+      return text.many ?? text.other
+    default:
+      return text.other
+  }
 }

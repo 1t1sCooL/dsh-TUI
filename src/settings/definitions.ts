@@ -13,10 +13,11 @@ import type { TuiSettingsField } from '../adapter/ports/channel-settings.js'
 import { SPLASH_FONT_OPTIONS } from '../components/splashFonts.js'
 import { BRAND_SETTING_OPTIONS } from '../branding.js'
 import type { ShortcutActionId } from '../utils/keymap.js'
+import { SETTINGS_RU } from './definitions.ru.js'
 
 export type SettingDefinition = Pick<TuiSettingsField, 'label' | 'descriptions' | 'hint' | 'hintDescriptions' | 'kind' | 'group' | 'options'>
 
-export const SETTING_DEFINITIONS = {
+const BASE_SETTING_DEFINITIONS = {
   'brand': {
     label: 'Brand look',
     descriptions: { zh: '品牌外观' },
@@ -158,6 +159,7 @@ export const SETTING_DEFINITIONS = {
     options: [
       { value: 'zh', label: '中文', descriptions: { zh: '中文' } },
       { value: 'en', label: 'English', descriptions: { zh: '英文' } },
+      { value: 'ru', label: 'Русский', descriptions: { zh: '俄语' } },
     ],
   },
   'launchpad': {
@@ -569,6 +571,47 @@ export const SETTING_DEFINITIONS = {
   },
 } satisfies Record<string, SettingDefinition>
 
+type BaseSettingKey = keyof typeof BASE_SETTING_DEFINITIONS
+
+// The Russian copy lives in `definitions.ru.ts`; the compiler names every key
+// missing from it (or left behind by a rename), so /settings cannot ship a
+// half-translated field list.
+type assertComplete<T extends never> = T
+type _MissingRuSettings = assertComplete<Exclude<BaseSettingKey, keyof typeof SETTINGS_RU>>
+type _UnknownRuSettings = assertComplete<Exclude<keyof typeof SETTINGS_RU, BaseSettingKey>>
+
+/**
+ * Every setting with the Russian label/hint/option copy merged in. The merge
+ * keeps the base definitions (and their order) untouched: a translation
+ * updates `definitions.ru.ts` only, and `scripts/verify-i18n.ts` checks that
+ * every option of every select carries a Russian label.
+ */
+export const SETTING_DEFINITIONS: Record<BaseSettingKey, SettingDefinition> = Object.fromEntries(
+  Object.entries(BASE_SETTING_DEFINITIONS).map(([key, definition]) => {
+    // Cast: the literal map only carries `options` on the entries that need
+    // them, and the per-option lookup must work for every member of the union.
+    const ru = SETTINGS_RU[key as BaseSettingKey] as {
+      readonly label: string
+      readonly hint: string
+      readonly options?: Readonly<Record<string, string>>
+    }
+    // `kind` narrows which definitions carry options at all; `in` keeps that
+    // union honest without widening the base literal to SettingDefinition.
+    const options = 'options' in definition && definition.options !== undefined
+      ? definition.options.map(option => ({
+        ...option,
+        descriptions: { ...option.descriptions, ru: ru.options?.[option.value] ?? option.label },
+      }))
+      : undefined
+    return [key, {
+      ...definition,
+      descriptions: { ...definition.descriptions, ru: ru.label },
+      hintDescriptions: { ...definition.hintDescriptions, ru: ru.hint },
+      ...(options === undefined ? {} : { options }),
+    }]
+  }),
+) as Record<BaseSettingKey, SettingDefinition>
+
 export type SettingKey = keyof typeof SETTING_DEFINITIONS
 
 /**
@@ -582,14 +625,14 @@ export type SettingKey = keyof typeof SETTING_DEFINITIONS
  * scripts/verify-settings-definitions.ts); a field without a group would
  * render on the root under "general". */
 export const SETTING_GROUPS = [
-  { id: 'appearance', mode: 'inline', title: 'Appearance', descriptions: { zh: '外观与布局' } },
-  { id: 'splash', mode: 'inline', title: 'Splash', descriptions: { zh: '开屏与吉祥物' } },
-  { id: 'conversation', mode: 'inline', title: 'Conversation', descriptions: { zh: '对话与输入' } },
-  { id: 'rendering', mode: 'inline', title: 'Rendering', descriptions: { zh: '图表与图片' } },
-  { id: 'math', mode: 'page', title: 'Formula', descriptions: { zh: '公式设置' } },
-  { id: 'status-bar', mode: 'page', title: 'Status bar', descriptions: { zh: '底栏设置' } },
-  { id: 'side-panel', mode: 'page', title: 'Side panel', descriptions: { zh: '侧栏' } },
-  { id: 'shortcuts', mode: 'page', title: 'Shortcuts', descriptions: { zh: '快捷键' } },
+  { id: 'appearance', mode: 'inline', title: 'Appearance', descriptions: { zh: '外观与布局', ru: 'Внешний вид' } },
+  { id: 'splash', mode: 'inline', title: 'Splash', descriptions: { zh: '开屏与吉祥物', ru: 'Заставка' } },
+  { id: 'conversation', mode: 'inline', title: 'Conversation', descriptions: { zh: '对话与输入', ru: 'Диалог' } },
+  { id: 'rendering', mode: 'inline', title: 'Rendering', descriptions: { zh: '图表与图片', ru: 'Графика' } },
+  { id: 'math', mode: 'page', title: 'Formula', descriptions: { zh: '公式设置', ru: 'Формулы' } },
+  { id: 'status-bar', mode: 'page', title: 'Status bar', descriptions: { zh: '底栏设置', ru: 'Строка состояния' } },
+  { id: 'side-panel', mode: 'page', title: 'Side panel', descriptions: { zh: '侧栏', ru: 'Боковая панель' } },
+  { id: 'shortcuts', mode: 'page', title: 'Shortcuts', descriptions: { zh: '快捷键', ru: 'Горячие клавиши' } },
 ] as const
 
 /**
@@ -611,119 +654,157 @@ export function settingField(key: SettingKey): SettingDefinition & { path: reado
  * Shortcut remap fields (`shortcuts.<action>`): one per SHORTCUT_ACTIONS
  * entry; the help text names the platform's default combos.
  */
-export const SHORTCUT_FIELD_META: Record<ShortcutActionId, { label: string; zh: string; hintEn: (defaults: string) => string; hintZh: (defaults: string) => string }> = {
+export const SHORTCUT_FIELD_META: Record<ShortcutActionId, { label: string; zh: string; ru: string; hintEn: (defaults: string) => string; hintZh: (defaults: string) => string; hintRu: (defaults: string) => string }> = {
   paste: {
     label: 'Paste shortcut',
     zh: '粘贴快捷键',
+    ru: 'Вставка из буфера',
     hintEn: d => `Clipboard paste (text, file paths, images). Default: ${d}. Alt+V works where the terminal eats Ctrl+V.`,
     hintZh: d => `剪贴板粘贴（文本、文件路径、图片）。默认 ${d}。终端吞掉 Ctrl+V 时可用 Alt+V。`,
+    hintRu: d => `Вставка из буфера (текст, пути к файлам, изображения). По умолчанию: ${d}. Alt+V работает там, где терминал перехватывает Ctrl+V.`,
   },
   history: {
     label: 'History search shortcut',
     zh: '历史搜索快捷键',
+    ru: 'Поиск по истории',
     hintEn: d => `Open the prompt-history search. Default: ${d}.`,
     hintZh: d => `打开输入历史搜索。默认 ${d}。`,
+    hintRu: d => `Открыть поиск по истории ввода. По умолчанию: ${d}.`,
   },
   editor: {
     label: 'External editor shortcut',
     zh: '外部编辑器快捷键',
+    ru: 'Внешний редактор',
     hintEn: d => `Edit the draft in $VISUAL/$EDITOR. Default: ${d}.`,
     hintZh: d => `在 $VISUAL/$EDITOR 外部编辑器中编辑草稿。默认 ${d}。`,
+    hintRu: d => `Редактировать черновик во внешнем редакторе $VISUAL/$EDITOR. По умолчанию: ${d}.`,
   },
   transcript: {
     label: 'Transcript mode shortcut',
     zh: '转录模式快捷键',
+    ru: 'Режим транскрипта',
     hintEn: d => `Toggle expanded transcript mode. Default: ${d}.`,
     hintZh: d => `切换展开转录模式。默认 ${d}。`,
+    hintRu: d => `Переключить расширенный режим транскрипта. По умолчанию: ${d}.`,
   },
   trajectory: {
     label: 'Trajectory scene shortcut',
     zh: '轨迹场景快捷键',
+    ru: 'Сцена траектории',
     hintEn: d => `Open the trajectory scene. Default: ${d}.`,
     hintZh: d => `打开轨迹场景。默认 ${d}。`,
+    hintRu: d => `Открыть сцену траектории. По умолчанию: ${d}.`,
   },
   dashboard: {
     label: 'Subagent dashboard shortcut',
     zh: '子代理面板快捷键',
+    ru: 'Панель субагентов',
     hintEn: d => `Open the subagent dashboard. Default: ${d}.`,
     hintZh: d => `打开子代理面板。默认 ${d}。`,
+    hintRu: d => `Открыть панель субагентов. По умолчанию: ${d}.`,
   },
   contextPanel: {
     label: 'Loaded-context panel shortcut',
     zh: '加载上下文面板快捷键',
+    ru: 'Панель контекста',
     hintEn: d => `Toggle the startup loaded-context panel. Default: ${d}.`,
     hintZh: d => `切换启动时的已加载上下文面板。默认 ${d}。`,
+    hintRu: d => `Показать или скрыть панель загруженного контекста при запуске. По умолчанию: ${d}.`,
   },
   continue: {
     label: 'Continue last session shortcut',
     zh: '继续上次会话快捷键',
+    ru: 'Продолжить сессию',
     hintEn: d => `On the launchpad, resume the most recent session. Default: ${d}. Only bound while the launchpad is up.`,
     hintZh: d => `在启动页上继续最近一条会话。默认 ${d}。仅在启动页生效。`,
+    hintRu: d => `На стартовом экране продолжить последнюю сессию. По умолчанию: ${d}. Действует, только пока открыт стартовый экран.`,
   },
   showAll: {
     label: 'Show-all shortcut',
     zh: '显示全部消息快捷键',
+    ru: 'Показать все',
     hintEn: d => `Toggle show-all-messages. Default: ${d}.`,
     hintZh: d => `切换显示全部消息。默认 ${d}。`,
+    hintRu: d => `Переключить показ всех сообщений. По умолчанию: ${d}.`,
   },
   redraw: {
     label: 'Redraw shortcut',
     zh: '终端重绘快捷键',
+    ru: 'Перерисовка',
     hintEn: d => `Clear and repaint the terminal. Default: ${d}.`,
     hintZh: d => `清空并重绘终端。默认 ${d}。`,
+    hintRu: d => `Очистить и перерисовать терминал. По умолчанию: ${d}.`,
   },
   todoFold: {
     label: 'Todo fold shortcut',
     zh: '待办折叠快捷键',
+    ru: 'Свернуть задачи',
     hintEn: d => `Fold running todos; hide/restore the idle goal/todo footer. Default: ${d}.`,
     hintZh: d => `运行时折叠待办，空闲时隐藏/恢复目标与待办底部面板。默认 ${d}。`,
+    hintRu: d => `Свернуть выполняющиеся задачи; скрыть или вернуть нижнюю строку цели и задач в простое. По умолчанию: ${d}.`,
   },
   questionFold: {
     label: 'Question panel fold shortcut',
     zh: '提问面板折叠快捷键',
+    ru: 'Свернуть вопрос',
     hintEn: d => `Fold/unfold the pending question panel. Default: ${d}.`,
     hintZh: d => `折叠/展开等待回答的提问面板。默认 ${d}。`,
+    hintRu: d => `Свернуть или развернуть панель ожидающего вопроса. По умолчанию: ${d}.`,
   },
   questionDetailUp: {
     label: 'Panel preview previous page shortcut',
     zh: '面板正文向上翻页快捷键',
+    ru: 'Превью: страница назад',
     hintEn: d => `Page up through question text or a compact approval preview without moving the choice focus. Default: ${d}.`,
     hintZh: d => `向上翻阅问卷正文或紧凑审批预览，不移动选项焦点。默认 ${d}。`,
+    hintRu: d => `Пролистать назад текст вопроса или краткий предпросмотр подтверждения, не сдвигая фокус выбора. По умолчанию: ${d}.`,
   },
   questionDetailDown: {
     label: 'Panel preview next page shortcut',
     zh: '面板正文向下翻页快捷键',
+    ru: 'Превью: страница вперед',
     hintEn: d => `Page down through question text or a compact approval preview without moving the choice focus. Default: ${d}.`,
     hintZh: d => `向下翻阅问卷正文或紧凑审批预览，不移动选项焦点。默认 ${d}。`,
+    hintRu: d => `Пролистать вперед текст вопроса или краткий предпросмотр подтверждения, не сдвигая фокус выбора. По умолчанию: ${d}.`,
   },
   expandEditor: {
     label: 'Fullscreen editor shortcut',
     zh: '全屏草稿编辑快捷键',
+    ru: 'Полноэкранный редактор',
     hintEn: d => `Toggle the fullscreen draft editor (Enter inserts a newline, Ctrl+Enter sends). Default: ${d}.`,
     hintZh: d => `切换全屏草稿编辑器（Enter 换行、Ctrl+Enter 发送）。默认 ${d}。`,
+    hintRu: d => `Переключить полноэкранный редактор черновика (Enter — новая строка, Ctrl+Enter — отправить). По умолчанию: ${d}.`,
   },
   star: {
     label: 'One-key star shortcut',
     zh: '一键 star 快捷键',
+    ru: 'Поставить звезду',
     hintEn: d => `Star the project via the gh CLI (same action as /star and the splash line's click). Default: ${d}.`,
     hintZh: d => `用 gh 给项目点 star（与 /star、开屏标语点击同一个动作）。默认 ${d}。`,
+    hintRu: d => `Поставить проекту звезду через gh CLI (то же, что /star и клик по строке на заставке). По умолчанию: ${d}.`,
   },
   undo: {
     label: 'Draft undo shortcut',
     zh: '草稿撤销快捷键',
+    ru: 'Отмена правки черновика',
     hintEn: d => `Undo the prompt draft one word-level step at a time (text, caret and images together). Draft-only: submitted or history-recalled text is out of scope (Esc Esc rewinds turns, Ctrl+R recalls history). Default: ${d}.`,
     hintZh: d => `按词撤销输入框草稿（文本、光标、图片一起回退）。只作用于草稿：提交或用历史召回后不可撤销；与 Esc Esc 回溯、Ctrl+R 历史召回不是一回事。默认 ${d}。`,
+    hintRu: d => `Отменять правку черновика по одному слову (текст, курсор и изображения вместе). Только черновик: отправленный текст и текст из истории не отменяются (Esc Esc откатывает ходы, Ctrl+R вызывает историю). По умолчанию: ${d}.`,
   },
   sidePanel: {
     label: 'Side panel shortcut',
     zh: '侧栏快捷键',
+    ru: 'Боковая панель',
     hintEn: d => `Smart three-state sidebar toggle: closed → open+focus → focus chat → closed. Default: ${d}. tmux users should remap it (the prefix eats Ctrl+B).`,
     hintZh: d => `侧栏智能三态：关闭 → 打开并聚焦 → 焦点回聊天 → 关闭。默认 ${d}。tmux 用户请改键（前缀会吞掉它）。`,
+    hintRu: d => `Умное трехпозиционное переключение боковой панели: закрыта → открыта с фокусом → фокус в чате → закрыта. По умолчанию: ${d}. Пользователям tmux стоит переназначить (префикс съедает Ctrl+B).`,
   },
   sidePanelZoom: {
     label: 'Side panel zoom shortcut',
     zh: '侧栏缩放快捷键',
+    ru: 'Масштаб боковой панели',
     hintEn: d => `Zoom the active side panel (chat keeps its minimum width). Default: ${d}.`,
     hintZh: d => `缩放当前侧栏面板（聊天列保留最小宽度）。默认 ${d}。`,
+    hintRu: d => `Изменить масштаб активной боковой панели (чат сохраняет минимальную ширину). По умолчанию: ${d}.`,
   },
 }
